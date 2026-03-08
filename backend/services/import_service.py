@@ -43,7 +43,7 @@ class ImportService:
             
             # Execute cook import command
             result = subprocess.run(
-                [self.cook_path, "import", job.url],
+                [self.cook_path, job.url],
                 capture_output=True,
                 text=True,
                 timeout=30
