@@ -5,6 +5,7 @@ A web application for importing recipes from URLs using the `cook` tool. Built w
 ## Features
 
 - 🔗 Import recipes from any URL
+- 🖼️ Automatic image download and local storage
 - 🎨 Beautiful Solarized Light theme
 - ⚡ Real-time import status updates
 - 🔄 Background job processing
@@ -95,17 +96,23 @@ cook-import-server/
    cp ../.env.example ../.env
    # Edit .env if needed (optional for development)
    ```
+   
+   **Available variables:**
+   - `PORT` - Backend server port (default: 7395)
+   - `BASE_PATH` - Deployment basepath (default: empty for root)
+   - `COOK_PATH` - Path to cook executable (default: cook-toy)
+   - `RECIPES_DIR` - Directory for imported recipes (default: ../recipes/import)
 
 4. **Run the backend:**
    ```bash
    # From the backend directory
    python -m backend.main
    
-   # Or use uvicorn directly
+   # Or use uvicorn directly (port from .env or default 7395)
    uvicorn backend.main:app --reload --host 0.0.0.0 --port 7395
    ```
 
-   The API will be available at `http://localhost:7395`
+   The API will be available at `http://localhost:7395` (or your configured PORT)
 
 ### Frontend Setup
 
@@ -120,6 +127,8 @@ cook-import-server/
    cp .env.example .env
    # Edit .env if deploying to a subpath
    ```
+   
+   **Note:** The frontend dev server automatically reads `PORT` from the root `.env` file to proxy API requests to the correct backend port.
 
 3. **Run the development server:**
    ```bash

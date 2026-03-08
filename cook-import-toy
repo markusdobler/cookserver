@@ -71,17 +71,11 @@ Enjoy your {title}!
 
 
 def main():
-    if len(sys.argv) < 3:
-        print("Usage: cook-toy import <url>", file=sys.stderr)
+    if len(sys.argv) < 2:
+        print("Usage: cook-import-toy <url>", file=sys.stderr)
         sys.exit(1)
     
-    command = sys.argv[1]
-    
-    if command != "import":
-        print(f"Unknown command: {command}", file=sys.stderr)
-        sys.exit(1)
-    
-    url = sys.argv[2]
+    url = sys.argv[1]
     recipe = generate_recipe(url)
     print(recipe)
 

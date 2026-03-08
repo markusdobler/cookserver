@@ -15,8 +15,9 @@ load_dotenv(project_root / ".env")
 
 # Configuration
 BASE_PATH = os.getenv("BASE_PATH", "").rstrip("/")
-COOK_PATH = os.getenv("COOK_PATH", "cook-toy")
-RECIPES_DIR = os.getenv("RECIPES_DIR", "../recipes/import")
+IMPORT_CLI_TOOL = os.getenv("IMPORT_CLI_TOOL", "cook-import-toy")
+RECIPES_IMPORT_DIR = os.getenv("RECIPES_IMPORT_DIR", "../recipes/import")
+IMAGE_IMPORT_PATH = os.getenv("IMAGE_IMPORT_PATH", "recipes/images")
 
 # Create FastAPI app
 app = FastAPI(
@@ -36,10 +37,12 @@ app.add_middleware(
 )
 
 # Initialize import service
-recipes_path = Path(__file__).parent / RECIPES_DIR
+recipes_import_path = Path(__file__).parent / RECIPES_IMPORT_DIR
+images_import_path = Path(__file__).parent / IMAGE_IMPORT_PATH
 import_service = ImportService(
-    cook_path=COOK_PATH,
-    recipes_dir=str(recipes_path.resolve())
+    import_cli_tool=IMPORT_CLI_TOOL,
+    recipes_import_dir=str(recipes_import_path.resolve()),
+    images_import_dir=str(images_import_path.resolve())
 )
 set_import_service(import_service)
 
@@ -53,7 +56,7 @@ async def health_check():
     return {
         "status": "healthy",
         "base_path": BASE_PATH,
-        "cook_path": COOK_PATH,
+        "import_cli_tool": IMPORT_CLI_TOOL,
         "recipes_dir": str(recipes_path.resolve())
     }
 
@@ -93,9 +96,10 @@ if static_dir.exists():
 
 if __name__ == "__main__":
     import uvicorn
+    port = int(os.getenv("PORT", 7395))
     uvicorn.run(
         "backend.main:app",
         host="0.0.0.0",
-        port=7395,
+        port=port,
         reload=True
     )

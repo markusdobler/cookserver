@@ -2,8 +2,11 @@ import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), '')
+  const env = loadEnv(mode, process.cwd()+"/..", '')
   const basePath = env.VITE_BASE_PATH || '/'
+  const backendPort = env.PORT || '7395'
+  const apiTarget = env.VITE_API_URL || `http://localhost:${backendPort}`
+    console.log("XX", env, backendPort, apiTarget)
 
   return {
     plugins: [vue()],
@@ -12,7 +15,7 @@ export default defineConfig(({ mode }) => {
       port: 3000,
       proxy: {
         '/api': {
-          target: env.VITE_API_URL || 'http://localhost:7395',
+          target: apiTarget,
           changeOrigin: true,
         }
       }
