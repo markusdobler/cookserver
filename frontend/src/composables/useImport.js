@@ -10,14 +10,30 @@ export function useImport() {
   
   const pollInterval = ref(null)
   
-  const startImport = async (url) => {
+  const startImport = async (mode, data) => {
     isLoading.value = true
     error.value = null
     result.value = null
     
     try {
+      // Build request based on mode
+      let request
+      switch (mode) {
+        case 'url':
+          request = { type: 'url', url: data }
+          break
+        case 'text':
+          request = { type: 'text', text: data }
+          break
+        case 'pdf':
+          request = { type: 'pdf', pdf_data: data }
+          break
+        default:
+          throw new Error('Invalid import mode')
+      }
+      
       // Create import job
-      const response = await createImport(url)
+      const response = await createImport(request)
       const jobId = response.job_id
       
       // Start polling for status

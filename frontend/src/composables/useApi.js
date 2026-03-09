@@ -10,8 +10,12 @@ const api = axios.create({
 })
 
 export function useApi() {
-  const createImport = async (url) => {
-    const response = await api.post('/api/import', { url })
+  const createImport = async (request) => {
+    // request can be:
+    // { type: 'url', url: 'https://...' }
+    // { type: 'text', text: '...' }
+    // { type: 'pdf', pdf_data: 'base64...' }
+    const response = await api.post('/api/import', request)
     return response.data
   }
 

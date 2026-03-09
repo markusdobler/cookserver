@@ -8,7 +8,7 @@ from typing import Dict, Optional
 from urllib.parse import urlparse
 import requests
 
-from ..models.job import Job, JobStatus
+from ..models.job import Job, JobStatus, InputType
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +24,16 @@ class ImportService:
         self.recipes_import_dir.mkdir(parents=True, exist_ok=True)
         self.images_import_dir.mkdir(parents=True, exist_ok=True)
     
-    def create_job(self, url: str) -> Job:
+    def create_job(self, input_type: InputType, url: str = None, text: str = None, pdf_data: str = None) -> Job:
         """Create a new import job"""
         job_id = str(uuid.uuid4())
         job = Job(
             job_id=job_id,
             status=JobStatus.PENDING,
-            url=url
+            input_type=input_type,
+            url=url,
+            text=text,
+            pdf_data=pdf_data
         )
         self.jobs[job_id] = job
         return job
@@ -49,45 +52,15 @@ class ImportService:
             # Update status to processing
             job.status = JobStatus.PROCESSING
             
-            # Execute cook import command
-            result = subprocess.run(
-                [self.import_cli_tool, job.url],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            
-            if result.returncode != 0:
-                raise Exception(f"Cook command failed: {result.stderr}")
-            
-            # Parse the output
-            content = result.stdout
-            
-            # Try to download image if present in frontmatter
-            image_url = self._extract_image_url(content)
-            if image_url:
-                logger.info(f"Found image URL in recipe: {image_url}")
-                relative_path = self._download_image(image_url)
-                if relative_path:
-                    # Update frontmatter with relative path
-                    content = self._update_frontmatter_image(content, relative_path)
-                    logger.info(f"Updated frontmatter image path to: {relative_path}")
-            
-            # Extract title for filename
-            title = self._extract_title(content)
-            
-            # Sanitize filename and add .cook extension
-            filename = self._sanitize_filename(title) + ".cook"
-            
-            # Create file_path with unique filename
-            file_path = self._get_unique_filename(self.recipes_import_dir / filename)
-            
-            # Write to file
-            file_path.write_text(content, encoding="utf-8")
-            
-            # Update job status
-            job.status = JobStatus.COMPLETED
-            job.filename = filename
+            # Route to appropriate handler based on input type
+            if job.input_type == InputType.URL:
+                self._process_url_import(job)
+            elif job.input_type == InputType.TEXT:
+                self._process_text_import(job)
+            elif job.input_type == InputType.PDF:
+                self._process_pdf_import(job)
+            else:
+                raise Exception(f"Unknown input type: {job.input_type}")
             
         except subprocess.TimeoutExpired:
             job.status = JobStatus.FAILED
@@ -95,6 +68,95 @@ class ImportService:
         except Exception as e:
             job.status = JobStatus.FAILED
             job.error = str(e)
+    
+    def _process_url_import(self, job: Job):
+        """Process URL-based import"""
+        # Execute cook import command
+        result = subprocess.run(
+            [self.import_cli_tool, job.url],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if result.returncode != 0:
+            raise Exception(f"Cook command failed: {result.stderr}")
+        
+        # Parse the output
+        content = result.stdout
+        
+        # Try to download image if present in frontmatter
+        image_url = self._extract_image_url(content)
+        if image_url:
+            logger.info(f"Found image URL in recipe: {image_url}")
+            relative_path = self._download_image(image_url)
+            if relative_path:
+                # Update frontmatter with relative path
+                content = self._update_frontmatter_image(content, relative_path)
+                logger.info(f"Updated frontmatter image path to: {relative_path}")
+        
+        # Save the recipe
+        self._save_recipe(job, content)
+    
+    def _process_text_import(self, job: Job):
+        """Process plain text import"""
+        # Use the cook import CLI with stdin
+        result = subprocess.run(
+            [self.import_cli_tool, "--text", job.text],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if result.returncode != 0:
+            raise Exception(f"Cook command failed: {result.stderr}")
+        
+        # Parse the output
+        content = result.stdout
+        
+        # Save the recipe
+        self._save_recipe(job, content)
+    
+    def _process_pdf_import(self, job: Job):
+        """Process PDF import (dummy implementation)"""
+        # TODO: Implement actual PDF processing
+        # For now, create a placeholder recipe
+        logger.info(f"PDF import requested for job {job.job_id} - using dummy implementation")
+        
+        content = """---
+title: "PDF Import (Not Yet Implemented)"
+---
+
+This recipe was imported from a PDF file.
+PDF processing is not yet implemented.
+
+>> ingredients
+
+>> instructions
+
+This is a placeholder. Actual PDF processing will be implemented in the future.
+"""
+        
+        # Save the recipe
+        self._save_recipe(job, content)
+    
+    def _save_recipe(self, job: Job, content: str):
+        """Save recipe content to file and update job status"""
+        # Extract title for filename
+        title = self._extract_title(content)
+        
+        # Sanitize filename and add .cook extension
+        filename = self._sanitize_filename(title) + ".cook"
+        
+        # Create file_path with unique filename
+        file_path = self._get_unique_filename(self.recipes_import_dir / filename)
+        
+        # Write to file
+        file_path.write_text(content, encoding="utf-8")
+        
+        # Update job status
+        job.status = JobStatus.COMPLETED
+        job.filename = filename
     
     def _extract_title(self, content: str) -> str:
         """Extract title from recipe frontmatter"""

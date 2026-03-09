@@ -1,5 +1,10 @@
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Depends
-from ..models.job import ImportRequest, ImportResponse, Job
+from typing import Union
+from ..models.job import (
+    ImportRequest, ImportResponse, Job, 
+    UrlImportRequest, TextImportRequest, PdfImportRequest,
+    InputType
+)
 from ..services.import_service import ImportService
 
 router = APIRouter(prefix="/api/import", tags=["import"])
@@ -21,13 +26,29 @@ def set_import_service(service: ImportService):
 
 @router.post("", response_model=ImportResponse)
 async def create_import(
-    request: ImportRequest,
+    request: Union[UrlImportRequest, TextImportRequest, PdfImportRequest],
     background_tasks: BackgroundTasks,
     service: ImportService = Depends(get_import_service)
 ):
     """Create a new import job"""
-    # Create job
-    job = service.create_job(str(request.url))
+    # Create job based on request type
+    if isinstance(request, UrlImportRequest):
+        job = service.create_job(
+            input_type=InputType.URL,
+            url=str(request.url)
+        )
+    elif isinstance(request, TextImportRequest):
+        job = service.create_job(
+            input_type=InputType.TEXT,
+            text=request.text
+        )
+    elif isinstance(request, PdfImportRequest):
+        job = service.create_job(
+            input_type=InputType.PDF,
+            pdf_data=request.pdf_data
+        )
+    else:
+        raise HTTPException(status_code=400, detail="Invalid request type")
     
     # Add background task to process import
     background_tasks.add_task(service.process_import, job.job_id)
