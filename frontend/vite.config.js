@@ -6,7 +6,6 @@ export default defineConfig(({ mode }) => {
   const basePath = env.VITE_BASE_PATH || '/'
   const backendPort = env.PORT || '7395'
   const apiTarget = env.VITE_API_URL || `http://localhost:${backendPort}`
-    console.log("XX", env, backendPort, apiTarget)
 
   return {
     plugins: [vue()],

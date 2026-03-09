@@ -7,6 +7,11 @@ from pathlib import Path
 from typing import Dict, Optional
 from urllib.parse import urlparse
 import requests
+import base64
+import pymupdf
+import pymupdf.layout
+import pymupdf4llm
+
 
 from ..models.job import Job, JobStatus, InputType
 
@@ -102,8 +107,9 @@ class ImportService:
         """Process plain text import"""
         # Use the cook import CLI with stdin
         result = subprocess.run(
-            [self.import_cli_tool, "--text", job.text],
+            [self.import_cli_tool, "--text", "-"],
             capture_output=True,
+            input=job.text,
             text=True,
             timeout=30
         )
@@ -117,26 +123,49 @@ class ImportService:
         # Save the recipe
         self._save_recipe(job, content)
     
+    def _save_biggest_image_from_pdf(self, doc):
+        fields = "xref smask width height bpc colorspace alt_colorspace name filter referencer".split()
+        image_refs = [dict(zip(fields, i)) for p in range(doc.page_count) for i in doc.get_page_images(p)]
+        image_ref = max(image_refs, key=lambda i: i['width']*i['height'])
+        image = doc.extract_image(image_ref['xref'])
+        filename = f"{uuid.uuid4()}.{image['ext']}"
+        dest_path = self.images_import_dir / filename
+        
+        with open(dest_path, 'wb') as f:
+            f.write(image['image'])
+        
+        logger.info(f"Extracted largest image from Pdf to {filename}")
+        return f"images/{filename}"
+
+
     def _process_pdf_import(self, job: Job):
-        """Process PDF import (dummy implementation)"""
-        # TODO: Implement actual PDF processing
-        # For now, create a placeholder recipe
-        logger.info(f"PDF import requested for job {job.job_id} - using dummy implementation")
+
+        doc = pymupdf.open(stream=base64.b64decode(job.pdf_data))
+
+        pdf_text = pymupdf4llm.to_markdown(doc)
+
+        # Use the cook import CLI with stdin
+        result = subprocess.run(
+            [self.import_cli_tool, "--text", "-"],
+            capture_output=True,
+            input=pdf_text,
+            text=True,
+            timeout=30
+        )
+
+        # Parse the output
+        content = result.stdout
         
-        content = """---
-title: "PDF Import (Not Yet Implemented)"
----
-
-This recipe was imported from a PDF file.
-PDF processing is not yet implemented.
-
->> ingredients
-
->> instructions
-
-This is a placeholder. Actual PDF processing will be implemented in the future.
-"""
+        relative_path = self._save_biggest_image_from_pdf(doc)
+        if relative_path:
+            # Update frontmatter with relative path
+            content = self._insert_frontmatter_image(content, relative_path)
+            logger.info(f"Inserted frontmatter image path to: {relative_path}")
         
+        if result.returncode != 0:
+            raise Exception(f"Cook command failed: {result.stderr}")
+        
+
         # Save the recipe
         self._save_recipe(job, content)
     
@@ -156,7 +185,7 @@ This is a placeholder. Actual PDF processing will be implemented in the future.
         
         # Update job status
         job.status = JobStatus.COMPLETED
-        job.filename = filename
+        job.filename = file_path.name
     
     def _extract_title(self, content: str) -> str:
         """Extract title from recipe frontmatter"""
@@ -261,6 +290,16 @@ This is a placeholder. Actual PDF processing will be implemented in the future.
         replacement = rf'\1{new_path}'
         
         updated_content = re.sub(pattern, replacement, content, flags=re.MULTILINE)
+        return updated_content
+    
+    def _insert_frontmatter_image(self, content: str, new_path: str) -> str:
+        """
+        Insert image URL in frontmatter with relative path.
+        """
+        pattern = r'^---\s*\n(.*?)\n---'
+        replacement = rf'---\n\1\nimage: {new_path}\n---'
+        
+        updated_content = re.sub(pattern, replacement, content, flags=re.MULTILINE | re.DOTALL)
         return updated_content
     
     def _sanitize_filename(self, title: str) -> str:
