@@ -8,9 +8,10 @@ from typing import Dict, Optional
 from urllib.parse import urlparse
 import requests
 import base64
-import pymupdf
-import pymupdf.layout
-import pymupdf4llm
+import io
+import pdfplumber
+from pdfminer.high_level import extract_pages
+from pdfminer.layout import LTImage, LTContainer
 
 
 from ..models.job import Job, JobStatus, InputType
@@ -123,27 +124,111 @@ class ImportService:
         # Save the recipe
         self._save_recipe(job, content)
     
-    def _save_biggest_image_from_pdf(self, doc):
-        fields = "xref smask width height bpc colorspace alt_colorspace name filter referencer".split()
-        image_refs = [dict(zip(fields, i)) for p in range(doc.page_count) for i in doc.get_page_images(p)]
-        image_ref = max(image_refs, key=lambda i: i['width']*i['height'])
-        image = doc.extract_image(image_ref['xref'])
-        filename = f"{uuid.uuid4()}.{image['ext']}"
-        dest_path = self.images_import_dir / filename
+    def _extract_images_from_layout(self, layout_obj, images=None):
+        """Recursively find all LTImage objects in layout"""
+        if images is None:
+            images = []
         
-        with open(dest_path, 'wb') as f:
-            f.write(image['image'])
+        if isinstance(layout_obj, LTImage):
+            images.append(layout_obj)
+        elif isinstance(layout_obj, LTContainer):
+            for child in layout_obj:
+                self._extract_images_from_layout(child, images)
+        return images
+    
+    def _get_image_extension_from_filters(self, filters) -> str:
+        """Determine image extension from PDF stream filters"""
+        if not filters:
+            return '.jpg'
         
-        logger.info(f"Extracted largest image from Pdf to {filename}")
-        return f"images/{filename}"
+        # Common PDF image filters
+        filter_map = {
+            'DCTDecode': '.jpg',      # JPEG
+            'JPXDecode': '.jp2',      # JPEG2000
+            'CCITTFaxDecode': '.tif', # TIFF
+            'JBIG2Decode': '.jbig2',  # JBIG2
+            'FlateDecode': '.png',    # PNG (usually)
+        }
+        
+        # Handle different filter formats
+        if isinstance(filters, list):
+            # Get first filter name
+            first_filter = filters[0]
+            # If it's a tuple/list with filter name and params, extract name
+            if isinstance(first_filter, (list, tuple)):
+                first_filter = first_filter[0] if first_filter else None
+        else:
+            first_filter = filters
+        
+        # Convert bytes to string if needed
+        if isinstance(first_filter, bytes):
+            first_filter = first_filter.decode('utf-8', errors='ignore')
+        
+        return filter_map.get(first_filter, '.jpg')
+    
+    def _save_biggest_image_from_pdf(self, pdf_bytes: bytes) -> Optional[str]:
+        """Extract largest image from PDF using pdfminer.six"""
+        
+        all_images = []
+        
+        # Extract pages and find all images
+        for page_layout in extract_pages(io.BytesIO(pdf_bytes)):
+            page_images = []
+            self._extract_images_from_layout(page_layout, page_images)
+            all_images.extend(page_images)
+        
+        if not all_images:
+            logger.warning("No images found in PDF")
+            return None
+        
+        # Sort images by area (largest first) and try to extract
+        sorted_images = sorted(all_images, key=lambda img: img.width * img.height, reverse=True)
+        
+        for image in sorted_images:
+            try:
+                # Get image data from stream
+                image_data = image.stream.get_data()
+                
+                # Determine file extension from stream filters
+                filters = image.stream.get_filters()
+                ext = self._get_image_extension_from_filters(filters)
+                
+                # Save image
+                filename = f"{uuid.uuid4()}{ext}"
+                dest_path = self.images_import_dir / filename
+                
+                with open(dest_path, 'wb') as f:
+                    f.write(image_data)
+                
+                logger.info(f"Extracted largest extractable image from PDF to {filename} (size: {int(image.width)}x{int(image.height)})")
+                return f"images/{filename}"
+                
+            except Exception as e:
+                logger.warning(f"Failed to extract image (size: {int(image.width)}x{int(image.height)}): {e}")
+                # Try next largest image
+                continue
+        
+        # If all images failed to extract
+        logger.error("Failed to extract any images from PDF - all images have unsupported formats")
+        return None
 
 
     def _process_pdf_import(self, job: Job):
-
-        doc = pymupdf.open(stream=base64.b64decode(job.pdf_data))
-
-        pdf_text = pymupdf4llm.to_markdown(doc)
-
+        """Process PDF import using pdfplumber for text and pdfminer.six for images"""
+        
+        # Decode PDF data
+        pdf_bytes = base64.b64decode(job.pdf_data)
+        
+        # Extract text using pdfplumber
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            text_parts = []
+            for page in pdf.pages:
+                text = page.extract_text(layout=True)
+                if text:
+                    text_parts.append(text)
+            
+            pdf_text = "\n\n".join(text_parts)
+        
         # Use the cook import CLI with stdin
         result = subprocess.run(
             [self.import_cli_tool, "--text", "-"],
@@ -152,20 +237,19 @@ class ImportService:
             text=True,
             timeout=30
         )
-
-        # Parse the output
-        content = result.stdout
-        
-        relative_path = self._save_biggest_image_from_pdf(doc)
-        if relative_path:
-            # Update frontmatter with relative path
-            content = self._insert_frontmatter_image(content, relative_path)
-            logger.info(f"Inserted frontmatter image path to: {relative_path}")
         
         if result.returncode != 0:
             raise Exception(f"Cook command failed: {result.stderr}")
         
-
+        # Parse the output
+        content = result.stdout
+        
+        # Extract largest image using pdfminer.six
+        relative_path = self._save_biggest_image_from_pdf(pdf_bytes)
+        if relative_path:
+            content = self._insert_frontmatter_image(content, relative_path)
+            logger.info(f"Inserted frontmatter image path to: {relative_path}")
+        
         # Save the recipe
         self._save_recipe(job, content)
     
