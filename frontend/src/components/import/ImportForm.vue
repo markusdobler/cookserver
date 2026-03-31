@@ -114,7 +114,12 @@
         v-if="result"
         class="mt-6 p-4 bg-green bg-opacity-10 border-2 border-green rounded-lg"
       >
-        <p class="text-green font-semibold">✓ {{ result.message }}</p>
+        <p class="text-green font-semibold">
+          ✓ Recipe imported successfully: 
+          <a :href="`/recipe/import/${result.filename}`" class="underline hover:text-cyan">
+            {{ result.filename }}
+          </a>
+        </p>
       </div>
       
       <!-- Error Message -->
